@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QR / Barcode Dev Console (ZXing)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<style>
+  body  {font-family:system-ui,Arial,sans-serif;margin:1rem;max-width:520px}
+  video {width:100%;border:2px solid #888;border-radius:8px}
+  select,button {margin:.4rem .2rem;padding:.35rem .8rem;font-size:1rem}
+  button:disabled {opacity:.45}
+  ul    {list-style:none;padding:0;margin:.6rem 0}
+  li    {background:#f2f2f2;margin-bottom:.25rem;padding:.4rem;border-radius:6px;word-break:break-all}
+  pre   {background:#111;color:#0f0;padding:.6rem;border-radius:6px;max-height:220px;overflow:auto}
+</style>
+</head>
+<body>
+
+<h2>QR / Barcode Developer Console</h2>
+
+<!-- STEP 1 — permission -->
+<button id="btnPerm">1 · Request camera permission</button><br>
+
+<!-- STEP 2 — enumerate -->
+<button id="btnEnum" disabled>2 · Enumerate cameras</button>
+<select id="camSelect"><option>(none yet)</option></select><br>
+
+<!-- STEP 3 — preview -->
+<button id="btnPrevStart" disabled>3 · Start preview</button>
+<button id="btnPrevStop"  disabled>Stop preview</button><br>
+
+<!-- STEP 4 — decode -->
+<button id="btnScanStart" disabled>4 · Start decode</button>
+<button id="btnScanStop"  disabled>Stop decode</button>
+
+<video id="preview" muted playsinline></video>
+
+<h3>Decoded results</h3>
+<ul id="codes"></ul>
+
+<h3>Log</h3>
+<pre id="log">ready…</pre>
+
+<script type="module">
+/* ZXing (barcode / QR) engine */
+import {
+  BrowserMultiFormatReader,
+  NotFoundException
+} from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.0.10/esm/index.min.js';
+
+const reader = new BrowserMultiFormatReader(undefined,{delayBetweenScanAttempts:350});
+
+/* ------- DOM shortcuts ------- */
+const $ = id => document.getElementById(id);
+const els = {
+  perm:  $('btnPerm'),
+  enum:  $('btnEnum'),
+  prevS: $('btnPrevStart'),
+  prevX: $('btnPrevStop'),
+  scanS: $('btnScanStart'),
+  scanX: $('btnScanStop'),
+  sel:   $('camSelect'),
+  video: $('preview'),
+  codes: $('codes'),
+  log:   $('log')
+};
+
+/* ------- logging helper ------- */
+function log(m){
+  console.log(m);
+  els.log.textContent += `\n${m}`;
+  els.log.scrollTop = els.log.scrollHeight;
+}
+
+/* ------- state ------- */
+let previewStream = null;
+let scanning      = false;
+
+/* ------- STEP 1 — permission ------- */
+els.perm.onclick = async () =>{
+  try{
+    const tmp = await navigator.mediaDevices.getUserMedia({video:true});
+    tmp.getTracks().forEach(t=>t.stop());
+    log('✅ permission granted');
+    els.enum.disabled = false;
+  }catch(e){
+    log(`❌ permission error: ${e.name}`);
+  }
+};
+
+/* ------- STEP 2 — enumerate ------- */
+els.enum.onclick = async () =>{
+  els.sel.innerHTML = '<option>(searching…)</option>';
+  const list = await navigator.mediaDevices.enumerateDevices();
+  const cams = list.filter(d=>d.kind==='videoinput');
+  if(!cams.length){
+    log('⚠️ enumerateDevices → 0 cameras');
+    els.sel.innerHTML = '<option>(none)</option>';
+    return;
+  }
+  els.sel.innerHTML = cams.map((d,i)=>
+    `<option value="${d.deviceId}">${d.label||'camera '+i}</option>`).join('');
+  log(`📷 cameras found: ${cams.length}`);
+  els.prevS.disabled = false;
+};
+
+/* ------- STEP 3 — preview ------- */
+els.prevS.onclick = async ()=>{
+  const id = els.sel.value;
+  try{
+    previewStream = await navigator.mediaDevices.getUserMedia({
+      video: {deviceId:{exact:id}}
+    });
+    els.video.srcObject = previewStream;
+    await els.video.play();
+    log('▶️ preview started');
+    els.prevS.disabled = true;
+    els.prevX.disabled = false;
+    els.scanS.disabled = false;
+  }catch(e){
+    log(`❌ preview error: ${e.name}`);
+  }
+};
+
+els.prevX.onclick = ()=>{
+  if(previewStream){
+    previewStream.getTracks().forEach(t=>t.stop());
+    previewStream = null;
+    els.video.srcObject = null;
+    log('⏹️ preview stopped');
+  }
+  els.prevS.disabled = false;
+  els.prevX.disabled = true;
+  els.scanS.disabled = true;
+};
+
+/* ------- STEP 4 — decode ------- */
+els.scanS.onclick = ()=>{
+  if(!previewStream){ log('⚠️ preview not running'); return; }
+  els.scanS.disabled = true; els.scanX.disabled = false;
+  scanning = true;
+  reader.decodeFromVideoElementContinuously(els.video, (res, err)=>{
+    if(res){
+      const li = document.createElement('li');
+      li.textContent = `${new Date().toLocaleTimeString()}  ${res.text}`;
+      els.codes.prepend(li);
+      log(`✅ decoded: ${res.text}`);
+    }else if(err && !(err instanceof NotFoundException)){
+      log(`⚠️ ${err}`);
+    }
+  });
+  log('🔍 decode loop running…');
+};
+
+els.scanX.onclick = async ()=>{
+  scanning = false;
+  await reader.reset();
+  log('🛑 decode stopped');
+  els.scanS.disabled = false; els.scanX.disabled = true;
+};
+
+/* ------- safety — stop everything if tab hidden ------- */
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){
+    if(scanning) els.scanX.click();
+    if(previewStream) els.prevX.click();
+  }
+});
+</script>
+</body>
+</html>
