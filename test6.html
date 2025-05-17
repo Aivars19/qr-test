@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fast QR / Barcode Scanner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<!-- fallback decoder (only loaded if BarcodeDetector unsupported) -->
+<script id="qr-lib" type="text/plain"
+        src="https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.umd.min.js"></script>
+<script>
+  /* let jsDelivr worker live on same CDN */
+  const QR_WORKER =
+    'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner-worker.min.js';
+</script>
+
+<style>
+ body{font-family:system-ui,Arial,sans-serif;margin:1rem;max-width:520px}
+ #videoBox{position:relative}
+ video{width:100%;border-radius:8px;background:#000}
+ canvas.overlay{position:absolute;left:0;top:0;width:100%;height:100%;
+                pointer-events:none}
+ button{margin:.4rem .2rem;padding:.4rem 1rem;font-size:1rem}
+ ul{list-style:none;padding:0;margin:.6rem 0}
+ li{background:#f2f2f2;padding:.45rem;border-radius:6px;margin-bottom:.25rem;
+    transition:background .3s ease}
+ li.flash{background:#9eff9e}
+</style>
+</head>
+<body>
+
+<h2>QR / Barcode Scanner</h2>
+
+<div id="videoBox">
+  <video id="video" muted playsinline></video>
+  <canvas id="ov" class="overlay"></canvas>
+</div>
+
+<button id="btnStart">Start</button>
+<button id="btnStop" disabled>Stop</button>
+<button id="btnReset">Reset list</button>
+
+<ul id="list"></ul>
+
+<script>
+/* ---------- DOM shortcuts ---------- */
+const $ = id => document.getElementById(id);
+const vid   = $('video');
+const ov    = $('ov');
+const ctx   = ov.getContext('2d');
+const list  = $('list');
+const btnStart=$('btnStart'), btnStop=$('btnStop'), btnReset=$('btnReset');
+
+/* ---------- globals ---------- */
+let stream=null, rafId=null, detector=null, qrScanner=null;
+const seen = new Set();
+
+/* ---------- util ---------- */
+function flashBox(box){
+  ctx.strokeStyle='lime'; ctx.lineWidth=4;
+  ctx.strokeRect(box.x, box.y, box.width, box.height);
+  setTimeout(()=>ctx.clearRect(0,0,ov.width,ov.height), 500);
+}
+function addCode(str){
+  if(seen.has(str)) return;
+  seen.add(str);
+  const li=document.createElement('li');
+  li.textContent=str;
+  list.prepend(li);
+  li.classList.add('flash');
+  setTimeout(()=>li.classList.remove('flash'),300);
+}
+
+/* ---------- start / stop ---------- */
+btnStart.onclick=start;
+btnStop .onclick=stop;
+btnReset.onclick=()=>{
+  seen.clear(); list.innerHTML='';
+};
+
+async function start(){
+  btnStart.disabled=true; btnStop.disabled=false;
+  /* get rear cam, 720p ideal */
+  stream = await navigator.mediaDevices.getUserMedia({
+    video:{
+      facingMode:{ exact:'environment' },
+      width:{ ideal:1280 }, height:{ ideal:720 }
+    }
+  });
+  vid.srcObject=stream; await vid.play();
+
+  /* match overlay canvas */
+  ov.width  = vid.videoWidth;
+  ov.height = vid.videoHeight;
+
+  if ('BarcodeDetector' in window){
+    detector = new BarcodeDetector({formats:['qr_code','ean_13','code_128','aztec']});
+    scanHardware();
+  } else {
+    /* lazy-load fallback lib (first time only) */
+    if(!window.QrScanner){
+      const s=document.createElement('script');
+      s.src=document.getElementById('qr-lib').getAttribute('src');
+      document.head.appendChild(s);
+      await new Promise(r=>s.onload=r);
+    }
+    QrScanner.WORKER_PATH = QR_WORKER;
+    qrScanner = new QrScanner(vid, res=>{
+      addCode(res.data);
+      if (navigator.vibrate) navigator.vibrate(30);
+    },{
+      /* 60 % centre crop */
+      preferredRegion:{x:.2,y:.2,width:.6,height:.6},
+      maxScansPerSecond:60
+    });
+    await qrScanner.start();
+  }
+}
+
+async function scanHardware(){
+  const crop = {x:.2, y:.2, w:.6, h:.6}; // central 60 %
+  const tmpCan = document.createElement('canvas');
+  const tctx = tmpCan.getContext('2d');
+  tmpCan.width  = vid.videoWidth * crop.w;
+  tmpCan.height = vid.videoHeight * crop.h;
+
+  const loop = async()=>{
+    const vw = vid.videoWidth, vh = vid.videoHeight;
+    tctx.drawImage(
+      vid,
+      vw*crop.x, vh*crop.y, vw*crop.w, vh*crop.h,
+      0,0,tmpCan.width,tmpCan.height
+    );
+    try{
+      const codes = await detector.detect(tmpCan);
+      ctx.clearRect(0,0,ov.width,ov.height);
+      codes.forEach(c=>{
+        /* adjust bbox to full-frame coords */
+        const b=c.boundingBox;
+        const adj = {
+          x:b.x/crop.w+vw*crop.x,
+          y:b.y/crop.h+vh*crop.y,
+          width:b.width/crop.w,
+          height:b.height/crop.h
+        };
+        flashBox(adj);
+        addCode(c.rawValue);
+        if (navigator.vibrate) navigator.vibrate(30);
+      });
+    }catch(e){ /* ignore NotFoundError */ }
+    rafId = requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+async function stop(){
+  btnStart.disabled=false; btnStop.disabled=true;
+  cancelAnimationFrame(rafId);
+  ctx.clearRect(0,0,ov.width,ov.height);
+  if (qrScanner){ await qrScanner.stop(); qrScanner.destroy(); qrScanner=null; }
+  if (stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream=null;
+  }
+}
+</script>
+</body>
+</html>
