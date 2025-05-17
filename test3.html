@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ZXing camera-aware QR/Barcode scanner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:1rem;max-width:480px}
+  video{width:100%;border:2px solid #aaa;border-radius:8px}
+  select,button{margin:.5rem 0;padding:.4rem 1rem;font-size:1rem}
+  button:disabled{opacity:.5}
+  ul{list-style:none;padding:0;margin:.5rem 0}
+  li{background:#f2f2f2;margin-bottom:.25rem;padding:.4rem;border-radius:6px;word-break:break-all}
+  pre{background:#111;color:#0f0;padding:.5rem;border-radius:6px;max-height:160px;overflow-y:auto}
+</style>
+</head>
+<body>
+
+<h2>QR / Barcode scanner (ZXing)</h2>
+
+<label>Camera:
+  <select id="camSelect"><option>(none yet)</option></select>
+</label><br>
+
+<video id="preview" muted playsinline></video><br>
+
+<button id="startBtn">Start scanning</button>
+<button id="stopBtn" disabled>Stop scanning</button>
+
+<h3>Scanned codes</h3>
+<ul id="codes"></ul>
+
+<h3>Debug log</h3>
+<pre id="log">log ready…</pre>
+
+<script type="module">
+import { BrowserMultiFormatReader, NotFoundException }
+  from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.0.10/esm/index.min.js';
+
+const reader = new BrowserMultiFormatReader(undefined,{delayBetweenScanAttempts:300});
+const els = {
+  video:    document.getElementById('preview'),
+  select:   document.getElementById('camSelect'),
+  startBtn: document.getElementById('startBtn'),
+  stopBtn:  document.getElementById('stopBtn'),
+  list:     document.getElementById('codes'),
+  log:      document.getElementById('log')
+};
+function log(m){console.log(m);els.log.textContent+=`\n${m}`;els.log.scrollTop=els.log.scrollHeight;}
+
+async function ensurePermission(){
+  try{
+    const tmp = await navigator.mediaDevices.getUserMedia({video:true});
+    tmp.getTracks().forEach(t=>t.stop());               // immediately release
+    return true;
+  }catch(e){
+    log(`❌ Permission denied (${e.name})`);
+    return false;
+  }
+}
+
+async function fillCamList(){
+  let devices = await navigator.mediaDevices.enumerateDevices();
+  devices = devices.filter(d=>d.kind==='videoinput');
+  els.select.innerHTML='';
+  if(!devices.length){ log('⚠️ enumerateDevices() → 0 videoinput'); return; }
+  for(const d of devices){
+    const opt = document.createElement('option');
+    opt.value = d.deviceId; opt.textContent = d.label||`Camera ${els.select.length}`;
+    els.select.append(opt);
+  }
+  log(`📷 Cameras listed: ${devices.length}`);
+}
+
+async function start(){
+  els.startBtn.disabled=true; els.stopBtn.disabled=false;
+  els.list.innerHTML='';
+  if(!(await ensurePermission())){ stop(); return; }
+  await fillCamList();
+
+  const chosen = els.select.value || undefined;        // undefined → auto
+  log(`▶️ Decoding on: ${chosen??'default'}`);
+
+  reader.decodeFromVideoDevice(
+    chosen, els.video,
+    (res, err) => {
+      if(res){
+        const li=document.createElement('li');
+        li.textContent=`${new Date().toLocaleTimeString()}  ${res.text}`;
+        els.list.prepend(li);
+        log(`✅ ${res.text}`);
+      }else if(err && !(err instanceof NotFoundException)){
+        log(`⚠️ ${err}`);
+      }
+    }
+  ).catch(e=>{log(`❌ Start error ${e}`);stop();});
+}
+
+async function stop(){
+  els.startBtn.disabled=false; els.stopBtn.disabled=true;
+  await reader.reset();
+  log('⏹️ Stopped');
+}
+
+els.startBtn.onclick=start;
+els.stopBtn .onclick=stop;
+els.select .onchange=async()=>{if(!els.stopBtn.disabled){await stop();await start();}};
+window.onvisibilitychange=()=>{if(document.hidden && !els.stopBtn.disabled)stop();};
+
+log('💡 click “Start scanning” to request permission and populate cameras');
+</script>
+</body>
+</html>
