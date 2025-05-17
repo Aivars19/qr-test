@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Step-by-step QR/Barcode Console</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{font-family:system-ui,Arial,sans-serif;margin:1rem;max-width:520px}
+ video{width:100%;border:2px solid #888;border-radius:8px}
+ select,button{margin:.4rem .2rem;padding:.35rem .9rem;font-size:1rem}
+ button:disabled{opacity:.45}
+ ul{list-style:none;padding:0;margin:.6rem 0}
+ li{background:#f2f2f2;margin-bottom:.25rem;padding:.4rem;border-radius:6px;word-break:break-all}
+ pre{background:#111;color:#0f0;padding:.6rem;border-radius:6px;max-height:220px;overflow:auto}
+</style>
+<!-- UMD build = no <script type="module"> headaches -->
+<script src="https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.umd.min.js"></script>
+<script>
+  /* worker lives on the same CDN */
+  QrScanner.WORKER_PATH =
+    'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner-worker.min.js';
+</script>
+</head>
+<body>
+
+<h2>QR / Barcode Dev Console</h2>
+
+<button id="btnPerm">1 · Request permission</button><br>
+
+<button id="btnEnum"  disabled>2 · Enumerate cams</button>
+<select id="camSelect"><option>(none yet)</option></select><br>
+
+<button id="btnScanStart" disabled>3 · Start scanner</button>
+<button id="btnScanStop"  disabled>Stop scanner</button>
+
+<video id="preview" muted playsinline></video>
+
+<h3>Decoded results</h3>
+<ul id="codes"></ul>
+
+<h3>Log</h3>
+<pre id="log">ready…</pre>
+
+<script>
+const $ = id => document.getElementById(id);
+const els = {
+  perm:$('btnPerm'), enum:$('btnEnum'),
+  scanS:$('btnScanStart'), scanX:$('btnScanStop'),
+  sel:$('camSelect'), video:$('preview'),
+  codes:$('codes'), log:$('log')
+};
+let scanner = null;
+
+function log(m){console.log(m);
+  els.log.textContent += `\n${m}`; els.log.scrollTop = els.log.scrollHeight;}
+
+/* ---------- 1. permission ---------- */
+els.perm.onclick = async ()=>{
+  try{
+    const tmp = await navigator.mediaDevices.getUserMedia({video:true});
+    tmp.getTracks().forEach(t=>t.stop());
+    log('✅ permission granted'); els.enum.disabled=false;
+  }catch(e){ log(`❌ permission: ${e.name}`); }
+};
+
+/* ---------- 2. enumerate ---------- */
+els.enum.onclick = async ()=>{
+  els.sel.innerHTML='<option>(searching…)</option>';
+  const cams = await QrScanner.listCameras(true);   // needs permission first
+  if(!cams.length){ log('⚠️ no cameras'); return; }
+  els.sel.innerHTML = cams.map(c=>
+    `<option value="${c.id}">${c.label||'camera'}</option>`).join('');
+  log(`📷 cams: ${cams.length}`); els.scanS.disabled=false;
+};
+
+/* ---------- 3. start / stop scanner ---------- */
+els.scanS.onclick = async ()=>{
+  els.scanS.disabled=true; els.scanX.disabled=false;
+  const deviceId = els.sel.value;
+  scanner = new QrScanner(els.video, res=>{
+    const li=document.createElement('li');
+    li.textContent=`${new Date().toLocaleTimeString()}  ${res.data}`;
+    els.codes.prepend(li); log(`✅ ${res.data}`);
+  },
+  {deviceId});          // open selected cam
+  await scanner.start();
+  log('▶️ scanner running…');
+};
+
+els.scanX.onclick = async ()=>{
+  if(scanner){await scanner.stop(); scanner.destroy(); scanner=null;}
+  els.scanS.disabled=false; els.scanX.disabled=true;
+  els.video.srcObject=null; log('⏹️ scanner stopped');
+};
+
+/* safety: auto-stop if tab hides */
+document.addEventListener('visibilitychange',()=> {
+  if(document.hidden && !els.scanS.disabled) els.scanX.click();
+});
+</script>
+</body>
+</html>
