@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ZXing dev-friendly QR/Barcode Scanner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:1rem;max-width:480px}
+  video{width:100%;border:2px solid #aaa;border-radius:8px}
+  select,button{margin:.5rem 0;padding:.4rem 1rem;font-size:1rem}
+  button:disabled{opacity:.5}
+  ul{list-style:none;padding:0;margin:.5rem 0}
+  li{background:#f2f2f2;margin-bottom:.25rem;padding:.4rem;border-radius:6px;word-break:break-all}
+  pre{background:#111;color:#0f0;padding:.5rem;border-radius:6px;max-height:160px;overflow-y:auto}
+</style>
+</head>
+<body>
+
+<h2>QR / Barcode scanner (ZXing)</h2>
+
+<label>Camera:
+  <select id="camSelect"></select>
+</label><br>
+
+<video id="preview" muted playsinline></video><br>
+
+<button id="startBtn">Start scanning</button>
+<button id="stopBtn" disabled>Stop scanning</button>
+
+<h3>Scanned codes</h3>
+<ul id="codes"></ul>
+
+<h3>Debug log</h3>
+<pre id="log">log ready…</pre>
+
+<script type="module">
+import { BrowserMultiFormatReader } from
+  'https://cdn.jsdelivr.net/npm/@zxing/browser@0.0.10/esm/index.min.js';
+
+const codeReader = new BrowserMultiFormatReader(undefined, { delayBetweenScanAttempts: 300 });
+
+const els = {
+  video:    document.getElementById('preview'),
+  select:   document.getElementById('camSelect'),
+  startBtn: document.getElementById('startBtn'),
+  stopBtn:  document.getElementById('stopBtn'),
+  list:     document.getElementById('codes'),
+  log:      document.getElementById('log')
+};
+
+function log(msg){ console.log(msg); els.log.textContent += `\n${msg}`; els.log.scrollTop = els.log.scrollHeight; }
+
+async function listCameras(){
+  const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+  if(!devices.length){ log('❌ No cameras found'); return; }
+  els.select.innerHTML = devices.map(d =>
+    `<option value="${d.deviceId}">${d.label || d.deviceId}</option>`).join('');
+  log(`📷 Cameras found: ${devices.length}`);
+}
+
+async function start(){
+  els.startBtn.disabled = true; els.stopBtn.disabled = false;
+  const deviceId = els.select.value || undefined;         // undefined => let ZXing pick
+  log(`▶️ Starting decoder on device: ${deviceId ?? 'auto'}`);
+
+  codeReader.decodeFromVideoDevice(
+    deviceId,
+    els.video,
+    (result, err, controls) => {
+      if(result){
+        const li = document.createElement('li');
+        li.textContent = `${new Date().toLocaleTimeString()}  ${result.text}`;
+        els.list.prepend(li);
+        log(`✅ Decoded: ${result.text}`);
+      } else if(err && !(err instanceof ZXing.NotFoundException)){
+        log(`⚠️ ${err}`);
+      }
+    }
+  ).catch(e => { log(`❌ Failed to start: ${e}`); stop(); });
+}
+
+async function stop(){
+  els.startBtn.disabled = false; els.stopBtn.disabled = true;
+  await codeReader.reset();      // stops stream + clears overlay
+  log('⏹️ Stopped');
+}
+
+els.startBtn.addEventListener('click', start);
+els.stopBtn .addEventListener('click', stop);
+els.select  .addEventListener('change', async () => {
+  if(!els.stopBtn.disabled){ await stop(); await start(); }
+});
+
+window.addEventListener('visibilitychange', () => {
+  if(document.hidden && !els.stopBtn.disabled) stop();   // auto-stop when tab is hidden
+});
+
+listCameras();
+</script>
+</body>
+</html>
