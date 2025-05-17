@@ -23,7 +23,7 @@
   <button id="start-scan">Start scanning</button>
   <div id="scanner"></div>
 
-  <h3>Scanned codes</h3>
+  <h3>Scanned codes (0.02) </h3>
   <ul id="codes"></ul>
 
   <script>
@@ -48,6 +48,7 @@
 
         scanner.start(
           id,
+          { facingMode: { exact: "environment" } },   // ← force back camera
           { fps: 10, qrbox: 250 },          // 10 fps, centered 250 px square
           (code /* decodedText */) => {     // success callback
             const li = document.createElement('li');
